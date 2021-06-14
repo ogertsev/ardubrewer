@@ -29,6 +29,8 @@ const int relay2_pin = 10;
 const int relay3_pin = 12;
 const int relay4_pin = 13;
 
+bool statusStabilized = 0;
+unsigned long stabilizeTime = 600000;
 bool valveOpen_state=0;
 float cubeTemp = -100;
 byte cubeTresh = 99;
@@ -36,8 +38,9 @@ float valveTemp = -100;
 float valveDelta = 2;
 byte heaterState = 0;
 bool valveState = 0;
-//float valveDelta = 2;
-unsigned int valveDelay = 60000;
+float tempNoise = 0.07;
+unsigned long valveDelay = 300000;
+
 
 //LCD config
 int  adc_key_val[5] ={30, 150, 360, 535, 760 };
@@ -60,8 +63,8 @@ DeviceAddress cubeThermometerAddr, valveThermometerAddr;
 int currButton =-1;
 byte currMenu = 0;
 int menuMin = 0;
-int menuMax = 7;
-String menuText[8] = {"1.Start Distil", "2.Stop dist temp", "3.Last Stats", "4.Valve Check", "5.Start Rectify", "6.Set cubeT addr", "7.Set vlveT addr", "8.Valve delta"};
+int menuMax = 8;
+String menuText[9] = {"1.Start Distil", "2.Stop dist temp", "3.Last Stats", "4.Valve Check", "5.Start Rectify", "6.Set cubeT addr", "7.Set vlveT addr", "8.Valve delta", "9.Stabilize"};
 //Stats
 int distTime = 0;
 int distStopTemp = 0;
@@ -79,8 +82,14 @@ lcd.createChar(1, char_cubeTepm);
 // init GPIO
 pinMode(heater_pin, OUTPUT);
 pinMode(valve_pin, OUTPUT);
+pinMode(relay2_pin, OUTPUT);
+pinMode(relay3_pin, OUTPUT);
+pinMode(relay4_pin, OUTPUT);
 digitalWrite(heater_pin, LOW);
 digitalWrite(valve_pin, HIGH);
+digitalWrite(relay2_pin, HIGH);
+digitalWrite(relay3_pin, HIGH);
+digitalWrite(relay4_pin, HIGH);
 
 
 //init ds18b20
@@ -224,7 +233,11 @@ void startDistill()
 
 void startRectify()
 {
+
+  stabilize();
+  
   unsigned long startMillis = millis();
+  unsigned long valveDelayStartMillis = millis();
   sensors.requestTemperatures();
   cubeTemp = getTemperature(cubeThermometerAddr);
   valveTemp = getTemperature(valveThermometerAddr);
@@ -237,7 +250,8 @@ void startRectify()
     sensors.requestTemperatures();
     cubeTemp = getTemperature(cubeThermometerAddr);
     valveTemp = getTemperature(valveThermometerAddr);
-    if (valveTemp<valveStopTemp) valveState=valveOpen_state; else {valveState=!valveOpen_state; };//delay(valveDelay);};
+    if ((valveTemp<valveStopTemp)&&((millis()-valveDelayStartMillis)>valveDelay)) valveState=valveOpen_state; 
+    if (valveTemp>=valveStopTemp) {valveState=!valveOpen_state; valveDelayStartMillis = millis();};//delay(valveDelay);};
     processValve();
     
     lcd.setCursor(11, 0);lcd.print((millis()-startMillis)/60000);
@@ -278,10 +292,44 @@ void moveMenu()
   if ((currButton == leftButton) and (currMenu==7)) valveDelta=valveDelta-0.1;  
   //if ((currButton == selectButton) and (currMenu==7) eeprom_write_byte(16, valveDelta);  
 
+   if ((currButton == selectButton) and (currMenu==8)) {stabilize(); return;};  
+
 }
 void processValve()
 {
    if (valveState!=digitalRead(valve_pin)) digitalWrite(valve_pin, valveState);
+  
+}
+
+void stabilize()
+{
+  unsigned long startMillis = millis();
+  unsigned long startStabilizeMillis = millis();
+  
+  float lastValveTemp;
+  lcd.clear();
+  lcd.setCursor(0, 0);lcd.print("Stabilizing ");
+  lcd.setCursor(0, 1);
+  digitalWrite(heater_pin, HIGH);
+  statusStabilized=0;
+
+  while (!statusStabilized) {
+    sensors.requestTemperatures();
+    valveTemp = getTemperature(valveThermometerAddr);
+    cubeTemp = getTemperature(cubeThermometerAddr);
+    if ((abs(valveTemp-lastValveTemp)<tempNoise)&&((millis()-startStabilizeMillis)>stabilizeTime)) {statusStabilized=1;  };
+    if ((abs(valveTemp-lastValveTemp)>=tempNoise)&&(!statusStabilized)) {lastValveTemp=valveTemp; startStabilizeMillis=millis();};
+    
+    lcd.setCursor(11, 0);lcd.print((millis()-startMillis)/60000);
+    lcd.setCursor(0, 1);lcd.write(char(1)); lcd.print(cubeTemp);
+    lcd.setCursor(10, 1);lcd.print(valveTemp);
+    
+    delay(1000);
+  }
+  statusStabilized = 0;
+  distTime = trunc((millis()-startMillis)/60000); 
+  distStopTemp = cubeTemp; 
+  currMenu = 2;
   
 }
 
