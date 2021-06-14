@@ -21,11 +21,15 @@ byte char_cubeTepm[8] = {
  B10001,
  B01110,
 };
-//Ardubrew config
+//Ardubrew config For LCD 8,9,4,5,6,7 - reserved 
 const int oneWire_pin = 2;
 const int heater_pin = 3;
 const int valve_pin = 11;
+const int relay2_pin = 10;
+const int relay3_pin = 12;
+const int relay4_pin = 13;
 
+bool valveOpen_state=0;
 float cubeTemp = -100;
 byte cubeTresh = 99;
 float valveTemp = -100;
@@ -233,12 +237,12 @@ void startRectify()
     sensors.requestTemperatures();
     cubeTemp = getTemperature(cubeThermometerAddr);
     valveTemp = getTemperature(valveThermometerAddr);
-    if (valveTemp<valveStopTemp) valveState=1; else {valveState=0; };//delay(valveDelay);};
+    if (valveTemp<valveStopTemp) valveState=valveOpen_state; else {valveState=!valveOpen_state; };//delay(valveDelay);};
     processValve();
     
     lcd.setCursor(11, 0);lcd.print((millis()-startMillis)/60000);
     lcd.setCursor(0, 1);lcd.write(char(1)); lcd.print(cubeTemp);
-    lcd.setCursor(8, 1); if (valveState) lcd.print("*"); else lcd.print("_");
+    lcd.setCursor(8, 1); if (valveState==valveOpen_state) lcd.print("*"); else lcd.print("_");
     lcd.setCursor(10, 1);lcd.print(valveTemp);
     
     delay(1000);
@@ -261,13 +265,13 @@ void moveMenu()
   if ((currButton == leftButton) and (currMenu==1)) cubeTresh=cubeTresh-1;  
   if ((currButton == selectButton) and (currMenu==1)) eeprom_write_byte(0, cubeTresh);  
   
-  if ((currButton == rightButton) and (currMenu==3)) {digitalWrite(valve_pin, LOW);valveState=1;}
-  if ((currButton == leftButton) and (currMenu==3)) {digitalWrite(valve_pin, HIGH);valveState=0;}
+  if ((currButton == rightButton) and (currMenu==3)) {digitalWrite(valve_pin, LOW);valveState=!valveOpen_state;}
+  if ((currButton == leftButton) and (currMenu==3)) {digitalWrite(valve_pin, HIGH);valveState=valveOpen_state;}
 
   if ((currButton == selectButton) and (currMenu==4)) {startRectify();return;};
 
   if ((currButton == selectButton) and (currMenu==5)) {oneWire.reset_search(); if (!sensors.getAddress(cubeThermometerAddr, 0)) Serial.println("Unable to find address for Device 0"); for (uint8_t i = 0; i < 8; i++) { eeprom_write_byte(i+1, cubeThermometerAddr[i]); }};
-S
+
   if ((currButton == selectButton) and (currMenu==6)) {oneWire.reset_search(); if (!sensors.getAddress(valveThermometerAddr, 0)) Serial.println("Unable to find address for Device 0"); for (uint8_t i = 0; i < 8; i++) { eeprom_write_byte(i+9, valveThermometerAddr[i]); }};
 
   if ((currButton == rightButton) and (currMenu==7)) valveDelta=valveDelta+0.1;
@@ -277,7 +281,7 @@ S
 }
 void processValve()
 {
-   if (valveState!=digitalRead(valve_pin)) digitalWrite(valve_pin, !valveState);
+   if (valveState!=digitalRead(valve_pin)) digitalWrite(valve_pin, valveState);
   
 }
 
