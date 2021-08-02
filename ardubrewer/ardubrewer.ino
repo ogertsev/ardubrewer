@@ -23,21 +23,26 @@ byte char_cubeTepm[8] = {
 };
 //Ardubrew config For LCD 8,9,4,5,6,7 - reserved 
 const int oneWire_pin = 2;
-const int heater_pin = 3;
+const int heater_pin = A2; // before were 3;
 const int valve_pin = 11;
-const int relay2_pin = 10;
+const int water_pin = 13;
 const int relay3_pin = 12;
-const int relay4_pin = 13;
+const int relay4_pin = 10;
+const int flowMeter_pin = 3;
+const int waterAlert_pin = A1;
 
 bool statusStabilized = 0;
 unsigned long stabilizeTime = 600000;
 bool valveOpen_state=0;
+bool waterOpen_state=0;
 float cubeTemp = -100;
 byte cubeTresh = 99;
+byte waterTresh = 29  ;
 float valveTemp = -100;
 float valveDelta = 2;
 byte heaterState = 0;
 bool valveState = 0;
+bool waterState = 0;
 float tempNoise = 0.07;
 unsigned long valveDelay = 300000;
 
@@ -63,8 +68,8 @@ DeviceAddress cubeThermometerAddr, valveThermometerAddr;
 int currButton =-1;
 byte currMenu = 0;
 int menuMin = 0;
-int menuMax = 8;
-String menuText[9] = {"1.Start Distil", "2.Stop dist temp", "3.Last Stats", "4.Valve Check", "5.Start Rectify", "6.Set cubeT addr", "7.Set vlveT addr", "8.Valve delta", "9.Stabilize"};
+int menuMax = 9;
+String menuText[10] = {"1.Start Distil", "2.Stop dist temp", "3.Last Stats", "4.Valve Check", "5.Start Rectify", "6.Set cubeT addr", "7.Set vlveT addr", "8.Valve delta", "9.Stabilize", "10.Water Check"};
 //Stats
 int distTime = 0;
 int distStopTemp = 0;
@@ -82,12 +87,12 @@ lcd.createChar(1, char_cubeTepm);
 // init GPIO
 pinMode(heater_pin, OUTPUT);
 pinMode(valve_pin, OUTPUT);
-pinMode(relay2_pin, OUTPUT);
+pinMode(water_pin, OUTPUT);
 pinMode(relay3_pin, OUTPUT);
 pinMode(relay4_pin, OUTPUT);
 digitalWrite(heater_pin, LOW);
 digitalWrite(valve_pin, HIGH);
-digitalWrite(relay2_pin, HIGH);
+digitalWrite(water_pin, HIGH);
 digitalWrite(relay3_pin, HIGH);
 digitalWrite(relay4_pin, HIGH);
 
@@ -215,19 +220,26 @@ void startDistill()
   lcd.setCursor(0, 0);lcd.print("Distilling ");
   lcd.setCursor(0, 1);
   digitalWrite(heater_pin, HIGH);
+  
   while (cubeTemp<cubeTresh) {
     sensors.requestTemperatures();
     cubeTemp = getTemperature(cubeThermometerAddr);
+    safetyCheck();
     lcd.setCursor(11, 0);lcd.print((millis()-startMillis)/60000);
     lcd.setCursor(0, 1);lcd.write(char(1)); lcd.print(cubeTemp);
     lcd.setCursor(10, 1);lcd.print(cubeTresh);
+
     
+    if (cubeTemp>waterTresh) startWater();
     delay(1000);
   }
   digitalWrite(heater_pin, LOW);
+  stopWater();
   distTime = trunc((millis()-startMillis)/60000);
   distStopTemp = cubeTemp;
+  
   currMenu = 2; //Показать статистику
+  
   
 }
 
@@ -250,6 +262,7 @@ void startRectify()
     sensors.requestTemperatures();
     cubeTemp = getTemperature(cubeThermometerAddr);
     valveTemp = getTemperature(valveThermometerAddr);
+    safetyCheck();
     if ((valveTemp<valveStopTemp)&&((millis()-valveDelayStartMillis)>valveDelay)) valveState=valveOpen_state; 
     if (valveTemp>=valveStopTemp) {valveState=!valveOpen_state; valveDelayStartMillis = millis();};//delay(valveDelay);};
     processValve();
@@ -262,6 +275,7 @@ void startRectify()
     delay(1000);
   }
   digitalWrite(heater_pin, LOW);
+  stopWater();
   distTime = trunc((millis()-startMillis)/60000);
   distStopTemp = cubeTemp;
   currMenu = 2; //Показать статистику
@@ -294,10 +308,38 @@ void moveMenu()
 
    if ((currButton == selectButton) and (currMenu==8)) {stabilize(); return;};  
 
+  if ((currButton == rightButton) and (currMenu==9)) {digitalWrite(water_pin, LOW);waterState=!waterOpen_state;}
+  if ((currButton == leftButton) and (currMenu==9)) {digitalWrite(water_pin, HIGH);waterState=waterOpen_state;}
+
 }
 void processValve()
 {
    if (valveState!=digitalRead(valve_pin)) digitalWrite(valve_pin, valveState);
+  
+}
+
+void safetyCheck()
+{
+  
+  
+}
+
+void startWater()
+{
+   digitalWrite(water_pin, waterOpen_state);
+  
+}
+
+void stopWater()
+{
+   delay(60000);
+   digitalWrite(water_pin, !waterOpen_state);
+  
+}
+
+void emergencyStopWater()
+{
+   digitalWrite(water_pin, !waterOpen_state);
   
 }
 
@@ -317,6 +359,8 @@ void stabilize()
     sensors.requestTemperatures();
     valveTemp = getTemperature(valveThermometerAddr);
     cubeTemp = getTemperature(cubeThermometerAddr);
+    safetyCheck();
+    if (cubeTemp>waterTresh) startWater();
     if ((abs(valveTemp-lastValveTemp)<tempNoise)&&((millis()-startStabilizeMillis)>stabilizeTime)) {statusStabilized=1;  };
     if ((abs(valveTemp-lastValveTemp)>=tempNoise)&&(!statusStabilized)) {lastValveTemp=valveTemp; startStabilizeMillis=millis();};
     
@@ -366,6 +410,14 @@ void printMenu()
     lcd.setCursor(0, 1);
     lcd.print(valveDelta); 
    }
+
+   if (currMenu==9) {
+    sensors.requestTemperatures();
+    cubeTemp = getTemperature(cubeThermometerAddr);
+    lcd.setCursor(0, 1); lcd.print("W:"); lcd.print(waterState);  
+    lcd.setCursor(5, 1); lcd.print("Tc:"); lcd.print(cubeTemp); 
+    //delay(1000); 
+   }   
 }
 
 
