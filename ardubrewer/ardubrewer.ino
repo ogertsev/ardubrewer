@@ -34,26 +34,40 @@ const int waterAlert_pin = A1;
 const byte cubeTreshEeprom = 0; // 0-1 byte
 const byte cubeThermometerAddrEeprom = 1; //1-8 byte
 const byte valveThermometerAddrEeprom = 9; //9-16 byte
-const byte VaporAlertThermometerAddrEeprom = 17; //17-24 byte
+const byte vaporAlertThermometerAddrEeprom = 17; //17-24 byte
 const byte valveDeltaEeprom = 25; //25 byte
 const byte waterTreshEeprom = 26; // 26 byte
-const byte VaporAlertTreshEeprom = 27; // 27 byte
+const byte vaporAlertTreshEeprom = 27; // 27 byte
+const byte cubeTempOffsetEeprom = 28; // 28 byte
+const byte valveTempOffsetEeprom = 29; // 29 byte
+const byte vaporAlertTempOffsetEeprom = 30; // 30 byte
 
 bool statusStabilized = 0;
 unsigned long stabilizeTime = 300000;
+byte heaterState = 0;
+//Valve
+float valveTemp = -100;
+float valveTempOffset = 0;
+float valveDelta = 2;
+bool valveState = 0;
 bool valveOpen_state=0;
 bool waterOpen_state=0;
-float cubeTemp = -100;
-byte cubeTresh = 99;
-byte waterTresh = 60  ;
-float valveTemp = -100;
-float valveDelta = 2;
-byte heaterState = 0;
-bool valveState = 0;
-bool waterState = 0;
 float tempNoise = 0.13;
 unsigned long valveDelay = 300000;
-
+//Cube
+float cubeTemp = -100;
+byte cubeTresh = 99;
+float cubeTempOffset = 0;
+//Water
+bool waterState = 0;
+byte waterTresh = 60  ;
+//VaporAlert
+float vaporAlertTemp = -100;
+float vaporAlertTempOffset = 0;
+byte vaporAlertTresh = 60;
+//Stats
+int distTime = 0;
+int distStopTemp = 0;
 
 //LCD config
 int  adc_key_val[5] ={30, 150, 360, 535, 760 };
@@ -71,17 +85,15 @@ LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
 #define TEMPERATURE_PRECISION 12
 OneWire oneWire(oneWire_pin);
 DallasTemperature sensors(&oneWire);
-DeviceAddress cubeThermometerAddr, valveThermometerAddr;
+DeviceAddress cubeThermometerAddr, valveThermometerAddr, vaporAlertThermometerAddr;
 //Menu
 int currButton =-1;
 byte currMenu = 0;
 int menuMin = 0;
-int menuMax = 9;
-String menuText[10] = {"1.Start Distil", "2.Stop dist temp", "3.Last Stats", "4.Valve Check", "5.Start Rectify", "6.Set cubeT addr", "7.Set vlveT addr", "8.Valve delta", "9.Stabilize", "10.Water Check"};
-//Stats
-int distTime = 0;
-int distStopTemp = 0;
-
+int menuMax = 18;
+String menuText[19] = {"0.Start Distil", "1.Stop dist temp", "2.Last Stats", "3.Valve Check", "4.Start Rectify", "5.Set cubeT addr", "6.Set vlveT addr", "7.Valve delta", 
+                       "8.Stabilize", "9.Water Check", "10.VaporAlertAddr", "11.Water Start T", "12.Set cube offset", "13.Cal cube offset", "14.Set Valve offset", "15.Cal valve offset",
+                       "16.Set vapor offset", "17.Cal vapor offset", "18.Set vapor tresh"};
 
 void setup() {
 Serial.begin(9600);
@@ -104,7 +116,6 @@ digitalWrite(water_pin, HIGH);
 digitalWrite(relay3_pin, HIGH);
 digitalWrite(relay4_pin, HIGH);
 
-
 //init ds18b20
 sensors.begin();
 Serial.print("Locating devices...");
@@ -124,6 +135,7 @@ Serial.print("Device 0 Address: ");
   Serial.println();
 sensors.setResolution(cubeThermometerAddr, TEMPERATURE_PRECISION);
 sensors.setResolution(valveThermometerAddr, TEMPERATURE_PRECISION);
+sensors.setResolution(vaporAlertThermometerAddr, TEMPERATURE_PRECISION);
 Serial.print("Device 0 Resolution: ");
 Serial.print(sensors.getResolution(cubeThermometerAddr), DEC);
 Serial.println();
@@ -135,6 +147,15 @@ Serial.println();
 cubeTresh = eeprom_read_byte(cubeTreshEeprom);
 for (uint8_t i = 0; i < 8; i++) { cubeThermometerAddr[i] = eeprom_read_byte(i+cubeThermometerAddrEeprom); };
 for (uint8_t i = 0; i < 8; i++) { valveThermometerAddr[i] = eeprom_read_byte(i+valveThermometerAddrEeprom); };
+for (uint8_t i = 0; i < 8; i++) { vaporAlertThermometerAddr[i] = eeprom_read_byte(i+vaporAlertThermometerAddrEeprom); };
+valveDelta = eeprom_read_byte(valveDeltaEeprom);
+waterTresh = eeprom_read_byte(waterTreshEeprom);
+vaporAlertTresh = eeprom_read_byte(vaporAlertTreshEeprom);
+cubeTempOffset = eeprom_read_byte(cubeTempOffsetEeprom);
+valveTempOffset = eeprom_read_byte(valveTempOffsetEeprom);
+vaporAlertTempOffset = eeprom_read_byte(vaporAlertTempOffsetEeprom);
+
+
 }
 
 void printAddress(DeviceAddress deviceAddress)
@@ -169,6 +190,9 @@ float getTemperature(DeviceAddress deviceAddress)
   }
   Serial.print("Temp C: ");
   Serial.print(tempC);
+  if (deviceAddress==cubeThermometerAddr) tempC=tempC+cubeTempOffset;
+  if (deviceAddress==valveThermometerAddr) tempC=tempC+valveTempOffset;
+  if (deviceAddress==vaporAlertThermometerAddr) tempC=tempC+vaporAlertTempOffset;
   return tempC;
 }
 // function to print a device's resolution
@@ -312,13 +336,35 @@ void moveMenu()
 
   if ((currButton == rightButton) and (currMenu==7)) valveDelta=valveDelta+0.1;
   if ((currButton == leftButton) and (currMenu==7)) valveDelta=valveDelta-0.1;  
-  //if ((currButton == selectButton) and (currMenu==7) eeprom_write_byte(16, valveDelta);  
+  if ((currButton == selectButton) and (currMenu==7)) eeprom_write_byte(valveDeltaEeprom, valveDelta);  
 
    if ((currButton == selectButton) and (currMenu==8)) {stabilize(); return;};  
 
   if ((currButton == rightButton) and (currMenu==9)) {digitalWrite(water_pin, LOW);waterState=!waterOpen_state;}
   if ((currButton == leftButton) and (currMenu==9)) {digitalWrite(water_pin, HIGH);waterState=waterOpen_state;}
 
+  if ((currButton == selectButton) and (currMenu==10)) {oneWire.reset_search(); if (!sensors.getAddress(vaporAlertThermometerAddr, 0)) Serial.println("Unable to find address for Device 0"); for (uint8_t i = 0; i < 8; i++) { eeprom_write_byte(i+vaporAlertThermometerAddrEeprom, vaporAlertThermometerAddr[i]); }};
+
+  if ((currButton == rightButton) and (currMenu==11)) waterTresh=waterTresh+1;
+  if ((currButton == leftButton) and (currMenu==11)) waterTresh=waterTresh-1;  
+  if ((currButton == selectButton) and (currMenu==11)) eeprom_write_byte(waterTreshEeprom, waterTresh);   
+
+  if ((currButton == rightButton) and (currMenu==12)) cubeTempOffset=cubeTempOffset+0.1;
+  if ((currButton == leftButton) and (currMenu==12)) cubeTempOffset=cubeTempOffset-0.1;  
+  if ((currButton == selectButton) and (currMenu==12)) eeprom_write_byte(cubeTempOffsetEeprom, cubeTempOffset); 
+
+
+  if ((currButton == rightButton) and (currMenu==14)) valveTempOffset=valveTempOffset+0.1;
+  if ((currButton == leftButton) and (currMenu==14)) valveTempOffset=valveTempOffset-0.1;  
+  if ((currButton == selectButton) and (currMenu==14)) eeprom_write_byte(valveTempOffsetEeprom, valveTempOffset); 
+
+  if ((currButton == rightButton) and (currMenu==16)) vaporAlertTempOffset=vaporAlertTempOffset+0.1;
+  if ((currButton == leftButton) and (currMenu==16)) vaporAlertTempOffset=vaporAlertTempOffset-0.1;  
+  if ((currButton == selectButton) and (currMenu==16)) eeprom_write_byte(vaporAlertTempOffsetEeprom, vaporAlertTempOffset);
+
+   if ((currButton == rightButton) and (currMenu==18)) vaporAlertTresh=vaporAlertTempOffset+1;
+  if ((currButton == leftButton) and (currMenu==18)) vaporAlertTresh=vaporAlertTempOffset-1;  
+  if ((currButton == selectButton) and (currMenu==18)) eeprom_write_byte(vaporAlertTreshEeprom, vaporAlertTresh);
 }
 void processValve()
 {
@@ -426,6 +472,39 @@ void printMenu()
     lcd.setCursor(5, 1); lcd.print("Tc:"); lcd.print(cubeTemp); 
     //delay(1000); 
    }   
+   if (currMenu==10) {
+    lcd.setCursor(0, 1);  for (uint8_t i = 0; i < 8; i++) {if (vaporAlertThermometerAddr[i] < 16) lcd.print("0"); lcd.print(vaporAlertThermometerAddr[i], HEX);}  
+   }
+   
+   if (currMenu==11) {
+    lcd.setCursor(0, 1);
+    lcd.print(waterTresh);      
+   }
+
+   if (currMenu==12) {
+    lcd.setCursor(0, 1);
+    lcd.print(cubeTempOffset);
+   }
+
+   if (currMenu==14) {
+    lcd.setCursor(0, 1);
+    lcd.print(valveTempOffset);
+   }
+
+   if (currMenu==16) {
+    lcd.setCursor(0, 1);
+    lcd.print(vaporAlertTempOffset);
+   }
+
+   if (currMenu==18) {
+    lcd.setCursor(0, 1);
+    lcd.print(vaporAlertTresh);
+   }
+
+
+
+
+      
 }
 
 
